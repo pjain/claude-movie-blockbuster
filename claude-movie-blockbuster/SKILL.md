@@ -36,6 +36,7 @@ If it does not:
    - **Airtable**: Sync to an Airtable base (Airtable MCP required).
    - **Local only**: Default JSON at `~/.movie-agent/library.json`.
 4. Follow the setup in `references/schemas.md` for the chosen sync target.
+5. Create `~/.movie-agent/library.json` with the empty library template from `references/schemas.md`. If that file is not yet available, create it with: `{"schema_version": "3.0", "profile": {"default_region": null, "sync_target": null}, "watchlist": [], "watched": [], "removed": []}`
 
 Temporary geography: if the user says "I'm in India this week," use `IN` for the current query only unless they explicitly ask to update the default.
 
@@ -92,6 +93,8 @@ De-duplicate by: (1) `ids.imdb`, (2) `ids.tmdb + media_type`, (3) normalized `me
 
 After every successful local write, sync to the user's chosen `profile.sync_target`.
 
+All sync settings (`sync_target`, `sync_errors`, `notion_database_id`, `airtable_base_id`, `airtable_table_name`) are stored in the `profile` object inside `~/.movie-agent/library.json`.
+
 ### Apple Notes (`"notes"`)
 
 ```bash
@@ -99,8 +102,21 @@ python3 ~/.claude/skills/claude-movie-blockbuster/scripts/library.py sync-notes
 ```
 
 Writes a formatted note titled **"Claude Movie Blockbuster"** to the default Notes account.
-The note contains a human-readable library summary followed by a JSON block Claude
-can parse on demand. See `references/schemas.md` for the note format.
+The note format is:
+```
+Claude Movie Blockbuster — Movie & TV Library
+Last updated: YYYY-MM-DD
+
+=== WATCHLIST (N) ===
+• Title (Type, Year) — Platform
+
+=== WATCHED (N) ===
+★★★★ Title (Type, Year) — watched YYYY-MM-DD
+
+--- JSON (do not edit below this line) ---
+{ ... full library JSON ... }
+```
+See `references/schemas.md` for the complete schema.
 
 Restore from Notes (e.g., if local JSON is lost):
 ```bash
@@ -111,11 +127,13 @@ python3 ~/.claude/skills/claude-movie-blockbuster/scripts/library.py restore-not
 
 Use the Notion MCP tools (`notion-create-pages`, `notion-update-page`). Store the
 returned `notion_page_id` in each local record. See `references/schemas.md`.
+Decision: if the record already has a `notion_page_id`, call `notion-update-page` with that ID. If `notion_page_id` is null, call `notion-create-pages` and store the returned page ID in the record.
 
 ### Airtable (`"airtable"`)
 
 Use Airtable MCP tools. Store `airtable_record_id` in each local record.
 See `references/schemas.md`.
+Decision: if the record already has an `airtable_record_id`, update that record. If null, create a new record and store the returned ID.
 
 **Sync failure handling:** Log failures in `profile.sync_errors` and continue.
 Never block a local write on a sync failure.
@@ -184,7 +202,7 @@ Examples:
 
 ### Remove
 
-1. Search all lists: `watchlist`, `watched`, `ratings`, `removed`.
+1. Search all lists: `watchlist`, `watched`, `removed`. (Ratings are stored inside `watched` records, not a separate list.)
 2. One match → remove from all active lists. Multiple matches → ask first.
 3. Confirm exactly what was removed. Write locally, then sync.
 
