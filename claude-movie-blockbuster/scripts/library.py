@@ -11,6 +11,8 @@ Usage:
 """
 
 import argparse
+import copy
+import html
 import json
 import os
 import re
@@ -52,7 +54,7 @@ EMPTY_LIBRARY = {
 def read_library(path):
     if not os.path.exists(path):
         os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
-        return dict(EMPTY_LIBRARY)
+        return copy.deepcopy(EMPTY_LIBRARY)
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
@@ -83,14 +85,12 @@ def find_title(library, query, media_type=None):
     for list_name in ("watchlist", "watched", "ratings", "removed"):
         for record in library.get(list_name, []):
             ids = record.get("ids", {})
-            if query in (ids.get("imdb"), ids.get("tmdb")):
+            type_match = media_type is None or record.get("media_type") == media_type
+            if query in (ids.get("imdb"), ids.get("tmdb")) and type_match:
                 results.append({"list": list_name, "record": record, "score": 2})
                 continue
-            title_match = normalize(query) in (
-                normalize(record.get("title", "")),
-                normalize(record.get("original_title", "")),
-            )
-            type_match = media_type is None or record.get("media_type") == media_type
+            q = normalize(query)
+            title_match = q == normalize(record.get("title", "")) or q == normalize(record.get("original_title", ""))
             if title_match and type_match:
                 results.append({"list": list_name, "record": record, "score": 1})
     results.sort(key=lambda x: -x["score"])
@@ -153,6 +153,7 @@ def _run_applescript(script):
         ["osascript", "-e", script],
         capture_output=True,
         text=True,
+        timeout=30,
     )
     if result.returncode != 0:
         raise RuntimeError(f"osascript error: {result.stderr.strip()}")
@@ -162,7 +163,7 @@ def _run_applescript(script):
 def sync_to_notes(library):
     body = _build_note_body(library)
     # Escape backslashes and double quotes for AppleScript string literal.
-    body_escaped = body.replace("\\", "\\\\").replace('"', '\\"')
+    body_escaped = body.replace("\\", "\\\\").replace('"', '\\"').replace("\n", '" & (ASCII character 10) & "')
     script = f"""
 tell application "Notes"
     if exists note "{NOTES_TITLE}" of default account then
@@ -185,11 +186,11 @@ tell application "Notes"
     end if
 end tell
 """
-    html = _run_applescript(script)
+    html_body = _run_applescript(script)
     # Strip HTML tags.
-    text = re.sub(r"<[^>]+>", "", html)
-    # Decode common HTML entities.
-    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", '"').replace("&#39;", "'")
+    text = re.sub(r"<[^>]+>", "", html_body)
+    # Decode HTML entities.
+    text = html.unescape(text)
     # Find JSON block after separator.
     sep_pos = text.find(NOTES_SEPARATOR)
     if sep_pos < 0:
